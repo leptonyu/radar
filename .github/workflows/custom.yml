@@ -1,0 +1,66 @@
+name: Get News
+on:
+  schedule:
+    - cron: "0 0,2,4,6,8,12 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: news-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  get_news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          clean: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run news
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          FREQUENCY_WORDS_PATH: config/fw.txt
+          GITHUB_ACTIONS: true
+        run: |
+          if [ ! -e "output.tar.gz" ]; then
+            curl -sL -o output.tar.gz https://github.com/leptonyu/radar/releases/download/v1.0.0/output.tar.gz
+          fi
+          SIZE=$(file output.tar.gz | grep 'gzip compressed data' | wc -l)
+          rm -rf output
+          if [ $SIZE -eq 1 ]; then
+            tar -zxf output.tar.gz
+          fi
+          if [ ! -e "output" ]; then
+            mkdir output
+          fi
+          echo "${{ vars.FREQUENCY_WORDS }}" | tr '|' '\n' | sed 's/;/\n\n/g' > "$FREQUENCY_WORDS_PATH"
+          python -m trendradar
+          tar -zcf output.tar.gz output
+
+      - name: Upload Artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          make_latest: 'true'
+          files: output.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
